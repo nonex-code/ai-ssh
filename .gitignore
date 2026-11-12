@@ -5,9 +5,9 @@
 *.log
 
 # never commit real material
-vault
-vault.tmp
-vault.edit
+/vault
+/vault.tmp
+/vault.edit
 
 # terminal library embedded into release builds (fetched by `make embed`)
 internal/vtlib/*.dll
