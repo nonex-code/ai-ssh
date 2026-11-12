@@ -125,11 +125,20 @@ func main() {
 }
 
 func moduleDir(path string) (string, error) {
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", path).Output()
+	// go mod download is explicit: a release runner may not have the module in
+	// its cache yet, and `go list -m` alone can then report an empty Dir.
+	out, err := exec.Command("go", "mod", "download", "-json", path).Output()
 	if err != nil {
-		return "", fmt.Errorf("go list %s: %w", path, err)
+		return "", fmt.Errorf("go mod download %s: %w", path, err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	var info struct{ Dir string }
+	if err := json.Unmarshal(out, &info); err != nil {
+		return "", fmt.Errorf("parse go mod download %s: %w", path, err)
+	}
+	if strings.TrimSpace(info.Dir) == "" {
+		return "", fmt.Errorf("module %s has no directory", path)
+	}
+	return info.Dir, nil
 }
 
 func fatal(err error) {
