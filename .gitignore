@@ -1,0 +1,24 @@
+/ai-ssh
+/ai-ssh.exe
+/bin/
+/build/
+*.log
+
+# never commit real material
+vault
+vault.tmp
+vault.edit
+
+# terminal library embedded into release builds (fetched by `make embed`)
+internal/vtlib/*.dll
+internal/vtlib/*.so
+internal/vtlib/*.dylib
+
+# editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
+
+# local-only end-to-end helpers: not part of the repository
+/scripts/smoke.ps1
+/scripts/e2e-approval.ps1

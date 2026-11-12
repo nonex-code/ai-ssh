@@ -1,0 +1,22 @@
+* text=auto
+
+# Build scripts run on Linux/macOS runners and in Git Bash; keep LF.
+*.go           text eol=lf
+*.sh           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.md           text eol=lf
+Makefile       text eol=lf
+*.desktop      text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf
+
+# Binary assets
+*.ico   binary
+*.icns  binary
+*.png   binary
+*.syso  binary
+*.ttf   binary
+*.dll   binary
+*.dylib binary
+*.so    binary

@@ -1,0 +1,3 @@
+// Windows resources for ai-ssh: the mark Explorer, the taskbar and shortcuts
+// show. Regenerate with "make icon" after editing internal/gui/assets/logo.svg.
+1 ICON "internal/gui/assets/logo.ico"

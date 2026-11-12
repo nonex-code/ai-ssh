@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ai-ssh
+GenericName=SSH for AI agents
+Comment=SSH access for AI agents; credentials never leave the local agent
+Exec=ai-ssh
+Icon=ai-ssh
+Terminal=false
+Categories=Development;Network;Security;
+Keywords=ssh;terminal;agent;ai;
+StartupWMClass=ai-ssh
