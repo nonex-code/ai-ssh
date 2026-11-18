@@ -2,6 +2,8 @@
 /ai-ssh.exe
 /bin/
 /build/
+# local deploy staging (binaries and scripts for other hosts)
+/dist/
 *.log
 
 # never commit real material

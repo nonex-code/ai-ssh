@@ -45,7 +45,7 @@ func (s *Server) OpenShell(ctx context.Context, alias string, cols, rows int) (*
 		rows = 24
 	}
 
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, true) // the window's shell has a human behind it
 	if err != nil {
 		return nil, err
 	}

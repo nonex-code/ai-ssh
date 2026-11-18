@@ -124,9 +124,12 @@ diagnostics go to stderr.
   shown with their status and errors.
 - **Monitor**: load, memory, disk, processes and logged-in users with
   80%/90% warning colours.
-- **Host keys**: the first connection shows a SHA256 fingerprint to pin; a
-  changed key shows both old and new and requires a confirmation checkbox
-  after checking it out of band.
+- **Host keys**: TOFU by default, with no `~/.ssh/known_hosts` needed. In the
+  window the first connection shows a SHA256 fingerprint to pin; an AI, MCP or
+  script has nobody to ask, so it trusts the key on first use, records it in the
+  audit log and pins it, and later connections are verified against the pin. A
+  changed key is always an error: both fingerprints are shown and a confirmation
+  checkbox is required after checking it out of band.
 
 ### Settings
 
@@ -198,7 +201,7 @@ The JSON inside the vault looks like this:
         "key": "~/.ssh/id_ed25519",
         "passphrase": "env:AISSH_PROD_PASSPHRASE"
       },
-      "host_key": "known_hosts",
+      "host_key": "tofu",
       "workdir": "/srv/app",
       "deny": ["^reboot", "rm[[:space:]]+-rf[[:space:]]+/"],
       "approval": "always",
@@ -214,8 +217,11 @@ The JSON inside the vault looks like this:
 - `auth.type`: `key` or `password`.
 - Passwords and passphrases may use `env:NAME` or `file:PATH`; the reference is
   kept when saving.
-- `host_key`: `known_hosts`, `insecure` (dangerous, tests only) or a
-  `SHA256:...` pin.
+- `host_key`: `tofu` (default), `known_hosts`, a known_hosts path, `insecure`
+  (dangerous, tests only) or a `SHA256:...` pin (comma separated for several).
+  Pins live in this field, so **no `~/.ssh/known_hosts` is required**; in
+  `known_hosts` mode a missing file is treated as a first connection, not an
+  error, and that file stays OpenSSH's: ai-ssh reads it and never writes it.
 - `approval`: `auto`, `elevate` or `always`.
 - `defaults.groups` orders the groups; host `group` values are added to it.
 
@@ -247,13 +253,19 @@ Implemented:
   socket;
 - AI operations are checked by `deny`/`allow`, elevation policy, path roots and
   approvals;
-- host key checks and approvals never pass through the AI.
+- host key checks and approvals never pass through the AI;
+- a first connection to an unpinned host is verified by a person at the window,
+  or, when nobody is there (AI, MCP, scripts), trusted once by the daemon,
+  recorded in the audit log (`host_key_trust`) and pinned, after which every
+  connection is checked against the pin; a changed key is always an error.
 
 Not implemented:
 
 - TPM / Secure Enclave / hardware signing;
 - code signing or macOS notarization (the OS may warn on first open);
 - protection from a same-user process reading the agent's memory;
+- an AI's very first connection to an unpinned host is not blocked (that would
+  stall any unattended machine); that single trust is in the audit log;
 - update checks require GitHub; before the first release the settings page
   says there is no release yet.
 

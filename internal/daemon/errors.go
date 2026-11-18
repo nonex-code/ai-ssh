@@ -32,6 +32,10 @@ func codeOf(err error) (string, string) {
 	if errors.As(err, &hk) {
 		return proto.ErrHostKey, hk.Error()
 	}
+	var unk *UnknownHostKeyError
+	if errors.As(err, &unk) {
+		return proto.ErrHostKey, unk.Error()
+	}
 	var mm *HostKeyMismatchError
 	if errors.As(err, &mm) {
 		return proto.ErrHostKey, mm.Error()

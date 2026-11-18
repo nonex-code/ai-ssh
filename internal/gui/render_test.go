@@ -238,7 +238,7 @@ func manyTabsApp() *App {
 
 func sessionApp() *App {
 	a := readyApp(demoHosts...)
-	a.tabs = []*terminalTab{{id: 1, host: "prod", opening: true, forwardPane: newForwardPane()}}
+	a.tabs = []*terminalTab{{id: 1, host: "prod", forwardPane: newForwardPane()}}
 	a.activeTab = 0
 	return a
 }

@@ -229,7 +229,7 @@ func TestHostKeyCallbackKnownHosts(t *testing.T) {
 		cfg: &config.Config{Defaults: config.Defaults{KnownHosts: kh}},
 		log: log.New(io.Discard, "", 0),
 	}
-	cb, err := s.hostKeyCallback(&config.Host{Alias: "x", HostKey: "known_hosts"})
+	cb, err := s.hostKeyCallback(&config.Host{Alias: "x", HostKey: "known_hosts"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,19 +255,124 @@ func TestHostKeyCallbackKnownHosts(t *testing.T) {
 	}
 }
 
-func TestHostKeyCallbackMissingKnownHosts(t *testing.T) {
+// A fresh machine has no ~/.ssh at all. That must not be a configuration
+// error: nothing is pinned yet, so the connection is a first meeting. With a
+// window in the loop the fingerprint is offered for pinning.
+func TestHostKeyCallbackMissingKnownHostsAsksTheHuman(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
 	s := &Server{
-		cfg: &config.Config{Defaults: config.Defaults{KnownHosts: filepath.Join(t.TempDir(), "nope")}},
+		cfg: &config.Config{Defaults: config.Defaults{KnownHosts: missing}},
 		log: log.New(io.Discard, "", 0),
 	}
-	if _, err := s.hostKeyCallback(&config.Host{Alias: "x", HostKey: "known_hosts"}); err == nil {
-		t.Fatal("expected an error for a missing known_hosts file")
+	for _, h := range []*config.Host{
+		{Alias: "x", HostKey: "known_hosts"},
+		{Alias: "y", HostKey: missing},
+		{Alias: "z", HostKey: config.HostKeyTOFU},
+		{Alias: "w"},
+	} {
+		cb, err := s.hostKeyCallback(h, true)
+		if err != nil {
+			t.Fatalf("%s: a missing catalogue must not fail: %v", h.Alias, err)
+		}
+		pub, _, _ := ed25519.GenerateKey(rand.Reader)
+		key, _ := ssh.NewPublicKey(pub)
+		err = cb("192.0.2.1:22", &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 22}, key)
+		var unk *UnknownHostKeyError
+		if !errors.As(err, &unk) {
+			t.Fatalf("%s: want a first meeting, got %T %v", h.Alias, err, err)
+		}
+		if unk.Fingerprint != ssh.FingerprintSHA256(key) {
+			t.Fatalf("%s: fingerprint = %q", h.Alias, unk.Fingerprint)
+		}
+	}
+}
+
+// Without a window there is nobody to ask, so an unpinned host is trusted on
+// first use; a TOFU host is pinned through the callback so the next connection
+// is verified instead.
+func TestHostKeyCallbackTrustsOnFirstUseWithoutAHuman(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "nope")
+	var pinned []string
+	s := &Server{
+		cfg: &config.Config{Defaults: config.Defaults{KnownHosts: missing}},
+		log: log.New(io.Discard, "", 0),
+		pinHostKey: func(alias, fingerprint string) error {
+			pinned = append(pinned, alias+"="+fingerprint)
+			return nil
+		},
+	}
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	key, _ := ssh.NewPublicKey(pub)
+	fp := ssh.FingerprintSHA256(key)
+
+	// tofu keeps the pin in the catalogue.
+	cb, err := s.hostKeyCallback(&config.Host{Alias: "tofu", HostKey: config.HostKeyTOFU}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb("192.0.2.1:22", nil, key); err != nil {
+		t.Fatalf("a first meeting must be trusted: %v", err)
+	}
+
+	// A known_hosts host is left alone: the file belongs to OpenSSH.
+	cb, err = s.hostKeyCallback(&config.Host{Alias: "kh", HostKey: "known_hosts"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb("192.0.2.1:22", nil, key); err != nil {
+		t.Fatalf("a first meeting must be trusted: %v", err)
+	}
+
+	if len(pinned) != 1 || pinned[0] != "tofu="+fp {
+		t.Fatalf("pinned = %v, want only the tofu host", pinned)
+	}
+
+	// A changed key is never accepted, human or not.
+	wantPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	wantKey, _ := ssh.NewPublicKey(wantPub)
+	cb, err = s.hostKeyCallback(&config.Host{Alias: "p", HostKey: ssh.FingerprintSHA256(wantKey)}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mm *HostKeyMismatchError
+	if !errors.As(cb("192.0.2.1:22", nil, key), &mm) {
+		t.Fatal("a mismatched key must never be trusted on first use")
+	}
+}
+
+func TestHostKeyCallbackMultiplePins(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	key, _ := ssh.NewPublicKey(pub)
+	other, _, _ := ed25519.GenerateKey(rand.Reader)
+	otherKey, _ := ssh.NewPublicKey(other)
+
+	s := &Server{log: log.New(io.Discard, "", 0)}
+	cb, err := s.hostKeyCallback(&config.Host{
+		Alias:   "x",
+		HostKey: ssh.FingerprintSHA256(otherKey) + ", " + ssh.FingerprintSHA256(key),
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cb("192.0.2.1:22", nil, key); err != nil {
+		t.Fatalf("any pinned fingerprint must match: %v", err)
+	}
+
+	third, _, _ := ed25519.GenerateKey(rand.Reader)
+	thirdKey, _ := ssh.NewPublicKey(third)
+	err = cb("192.0.2.1:22", nil, thirdKey)
+	var mm *HostKeyMismatchError
+	if !errors.As(err, &mm) {
+		t.Fatalf("an unpinned key must be a mismatch, got %T %v", err, err)
+	}
+	if mm.Want != ssh.FingerprintSHA256(otherKey)+", "+ssh.FingerprintSHA256(key) {
+		t.Fatalf("want = %q", mm.Want)
 	}
 }
 
 func TestHostKeyCallbackInsecure(t *testing.T) {
 	s := &Server{log: log.New(io.Discard, "", 0)}
-	cb, err := s.hostKeyCallback(&config.Host{Alias: "x", HostKey: "insecure"})
+	cb, err := s.hostKeyCallback(&config.Host{Alias: "x", HostKey: "insecure"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +598,7 @@ func TestUnknownHostKeyCarriesTheFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cb, err := s.hostKeyCallback(cfg.Hosts["h"])
+	cb, err := s.hostKeyCallback(cfg.Hosts["h"], true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +687,7 @@ func TestHostKeyMismatchIsStructured(t *testing.T) {
 
 	t.Run("known_hosts", func(t *testing.T) {
 		s := newServer(known)
-		cb, err := s.hostKeyCallback(s.config().Hosts["h"])
+		cb, err := s.hostKeyCallback(s.config().Hosts["h"], true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -591,7 +696,7 @@ func TestHostKeyMismatchIsStructured(t *testing.T) {
 
 	t.Run("pin", func(t *testing.T) {
 		s := newServer(ssh.FingerprintSHA256(wantPub))
-		cb, err := s.hostKeyCallback(s.config().Hosts["h"])
+		cb, err := s.hostKeyCallback(s.config().Hosts["h"], true)
 		if err != nil {
 			t.Fatal(err)
 		}

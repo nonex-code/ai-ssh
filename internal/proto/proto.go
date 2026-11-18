@@ -12,7 +12,6 @@ const (
 	OpHosts    = "hosts"
 	OpPing     = "ping"
 	OpLock     = "lock"
-	OpShutdown = "shutdown"
 	// OpAttach turns the connection into an event stream for a front end (the
 	// GUI): the daemon pushes approvals and reads decisions back.
 	OpAttach = "attach"

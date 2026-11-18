@@ -77,7 +77,7 @@ func (a *App) quickConnect() {
 		user:    user,
 		auth:    "key",
 		key:     "~/.ssh/id_ed25519",
-		hostKey: "known_hosts",
+		hostKey: config.HostKeyTOFU,
 		elev:    "none",
 	}
 	a.quick = ""
@@ -189,10 +189,13 @@ func mergeSSHConfig(cfg *config.Config, entries []sshconfig.Entry) (added, skipp
 			key = "~/.ssh/id_ed25519"
 		}
 		cfg.Hosts[e.Alias] = &config.Host{
-			Addr:    e.Address(),
-			User:    e.User,
-			Auth:    config.Auth{Type: "key", Key: key},
-			HostKey: "known_hosts",
+			Addr: e.Address(),
+			User: e.User,
+			Auth: config.Auth{Type: "key", Key: key},
+			// Hosts coming from ~/.ssh/config usually already have a known_hosts
+			// entry, so verifying against it avoids a prompt. When the file is
+			// missing the daemon falls back to first use anyway.
+			HostKey: config.HostKeyKnownHosts,
 			Group:   "ssh-config",
 		}
 		added++

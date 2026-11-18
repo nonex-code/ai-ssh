@@ -77,7 +77,7 @@ func (s *Server) handleExec(ctx context.Context, req proto.Request) proto.Respon
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, false)
 	if err != nil {
 		code, msg := codeOf(err)
 		return fail(code, msg, req.Host)

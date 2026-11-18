@@ -51,7 +51,7 @@ type editorDraft struct {
 // openEditor shows the connection form: a new host when alias is empty,
 // otherwise that host for editing.
 func (a *App) openEditor(alias string) {
-	draft := editorDraft{auth: "key", hostKey: "known_hosts", elev: "none"}
+	draft := editorDraft{auth: "key", hostKey: config.HostKeyTOFU, elev: "none"}
 	if alias != "" {
 		if ag := a.agentRef(); ag != nil {
 			if h, ok := ag.Config().Hosts[alias]; ok && h != nil {
@@ -126,7 +126,7 @@ func draftOf(alias string, h *config.Host) editorDraft {
 		d.elevPwd = h.Elevate.PasswordRef()
 		d.showElevate = true
 	}
-	if (h.HostKey != "" && h.HostKey != "known_hosts") || h.Workdir != "" {
+	if (h.HostKey != "" && h.HostKey != config.HostKeyTOFU) || h.Workdir != "" {
 		d.showAdvanced = true
 	}
 	return d
@@ -365,7 +365,7 @@ func (a *App) testDraft() {
 			a.testing = false
 			var unk *daemon.UnknownHostKeyError
 			if errors.As(err, &unk) {
-				a.testMsg = tr("主机密钥不在 known_hosts，先固定指纹再测")
+				a.testMsg = tr("首次连接这台主机，先核对指纹再测")
 				a.testOK = false
 				a.invalidate()
 				a.promptHostKeyFor(a.draft.addr, unk, func(fp string) {
@@ -590,7 +590,7 @@ func (a *App) editorView(c *ui.Context) {
 				ui.Row(c).FillWidth().Gap(gapMid).Children(func() {
 					a.fieldGrow(c, t, "host key", func() ui.Element {
 						return ui.Select(c.Key("f:hostkey"), &d.hostKey,
-							[]string{"known_hosts", "insecure"})
+							[]string{config.HostKeyTOFU, config.HostKeyKnownHosts, config.HostKeyInsecure})
 					})
 					a.fieldGrow(c, t, "workdir", func() ui.Element {
 						return ui.TextInput(c.Key("f:workdir"), &d.workdir).
@@ -600,7 +600,7 @@ func (a *App) editorView(c *ui.Context) {
 				if strings.HasPrefix(d.hostKey, "SHA256:") {
 					ui.Text(c, tr("固定指纹：")+d.hostKey).FontSize(fontSmall).TextColor(t.TextMuted)
 				}
-				ui.Text(c, tr("host key 默认对照 ~/.ssh/known_hosts；insecure 关闭校验，只用于测试机。")).
+				ui.Text(c, tr("host key 默认 tofu：首次连接核对指纹后钉进这条连接；known_hosts 对照 ~/.ssh/known_hosts（文件不存在也不报错）；insecure 关闭校验，只用于测试机。")).
 					FontSize(fontSmall).TextColor(t.TextMuted)
 			})
 

@@ -39,7 +39,6 @@ func (a *App) openLocalTerminal(sh localshell.Shell) {
 		host:        tr(sh.Label),
 		label:       tr(sh.Label),
 		status:      tabConnecting,
-		opening:     true,
 		forwardPane: newForwardPane(),
 		localShell:  &sh,
 	}

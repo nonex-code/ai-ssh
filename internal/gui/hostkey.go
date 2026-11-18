@@ -97,12 +97,12 @@ func (a *App) hostKeyView(c *ui.Context) {
 
 	ui.Column(c).Fill().Background(t.Background).Padding(24).Gap(gapMid).Children(func() {
 		ui.Text(c, tr("首次连接 ")+req.host).FontSize(fontPage).Bold()
-		ui.Text(c, tr("服务器出示的主机密钥不在 known_hosts 里。先核对 SHA256 指纹：")).
+		ui.Text(c, tr("首次连接这台服务器。先核对它出示的 SHA256 指纹：")).
 			FontSize(fontBody).TextColor(t.TextMuted)
 
 		a.hostKeyFingerprint(c, t, req.unk.Fingerprint)
 
-		ui.Text(c, tr("信任会把指纹钉进这条连接（host_key），不再依赖 known_hosts。")).
+		ui.Text(c, tr("信任会把指纹钉进这条连接（host_key），以后都据此校验。")).
 			FontSize(fontSmall).TextColor(t.TextMuted)
 		ui.Text(c, tr("如果和你预期的不一样，点取消，不要连接。")).
 			FontSize(fontSmall).TextColor(t.Warning)

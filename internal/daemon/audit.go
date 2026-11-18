@@ -16,6 +16,7 @@ type auditEntry struct {
 	Op         string `json:"op"`
 	Host       string `json:"host,omitempty"`
 	Command    string `json:"command,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 	Local      string `json:"local,omitempty"`
 	Remote     string `json:"remote,omitempty"`
 	Elevated   bool   `json:"elevated,omitempty"`
@@ -40,8 +41,10 @@ func newAuditLog(path string, lg *log.Logger) *auditLog {
 	return &auditLog{path: path, log: lg}
 }
 
+// write appends one entry. A daemon built without an audit log (tests, mostly)
+// simply drops it.
 func (a *auditLog) write(e auditEntry) {
-	if a.path == "" {
+	if a == nil || a.path == "" {
 		return
 	}
 	line, err := json.Marshal(e)

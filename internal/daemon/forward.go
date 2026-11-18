@@ -64,7 +64,7 @@ func (s *Server) StartForward(ctx context.Context, alias, kind, listen, target s
 		}
 	}
 
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, true) // the tunnel pane has a human behind it
 	if err != nil {
 		return nil, err
 	}

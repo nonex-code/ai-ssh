@@ -38,13 +38,10 @@ var ErrNoReleases = errors.New("no releases published yet")
 // Release is the latest release, as far as this platform is concerned.
 type Release struct {
 	Version      string    `json:"version"`
-	Tag          string    `json:"tag"`
 	PageURL      string    `json:"page_url"`
-	Notes        string    `json:"notes,omitempty"`
 	PublishedAt  time.Time `json:"published_at"`
 	ArchiveName  string    `json:"archive_name"`
 	ArchiveURL   string    `json:"archive_url"`
-	ArchiveSize  int64     `json:"archive_size"`
 	ChecksumsURL string    `json:"-"`
 	// Available is true when Version is newer than the running build.
 	Available bool `json:"available"`
@@ -53,12 +50,10 @@ type Release struct {
 type releasePayload struct {
 	TagName     string    `json:"tag_name"`
 	HTMLURL     string    `json:"html_url"`
-	Body        string    `json:"body"`
 	PublishedAt time.Time `json:"published_at"`
 	Assets      []struct {
 		Name string `json:"name"`
 		URL  string `json:"browser_download_url"`
-		Size int64  `json:"size"`
 	} `json:"assets"`
 }
 
@@ -96,16 +91,14 @@ func Check(ctx context.Context, current string) (*Release, error) {
 	want := ArchiveName(version, runtime.GOOS, runtime.GOARCH)
 	rel := &Release{
 		Version:     version,
-		Tag:         tag,
 		PageURL:     payload.HTMLURL,
-		Notes:       strings.TrimSpace(payload.Body),
 		PublishedAt: payload.PublishedAt,
 		Available:   compare(version, current) > 0,
 	}
 	for _, a := range payload.Assets {
 		switch a.Name {
 		case want:
-			rel.ArchiveName, rel.ArchiveURL, rel.ArchiveSize = a.Name, a.URL, a.Size
+			rel.ArchiveName, rel.ArchiveURL = a.Name, a.URL
 		case sumsAsset:
 			rel.ChecksumsURL = a.URL
 		}

@@ -39,7 +39,7 @@ func readyApp(hosts ...proto.HostInfo) *App {
 
 var demoHosts = []proto.HostInfo{
 	{Alias: "prod", User: "deploy", Addr: "10.0.0.5:22", Auth: "key", HostKey: "known_hosts", Elevate: "sudo", Workdir: "/srv/app"},
-	{Alias: "staging", User: "ci", Addr: "10.0.0.9:22", Auth: "key", HostKey: "SHA256:abc"},
+	{Alias: "staging", User: "ci", Addr: "10.0.0.9:22", Auth: "key", HostKey: "SHA256:Ux8n0n3Vq2kS9m1xYj5oZpQ0l5c4s1Ff2g7h8j9k0lm"},
 }
 
 func TestLockedView(t *testing.T) {
@@ -100,7 +100,7 @@ func TestTabBarShowsSessions(t *testing.T) {
 	a := readyApp(demoHosts...)
 	a.tabs = []*terminalTab{
 		{id: 1, host: "prod"},
-		{id: 2, host: "staging", opening: true},
+		{id: 2, host: "staging"},
 	}
 	tt := ui.NewTester(a.view, 1000, 700)
 
@@ -117,7 +117,7 @@ func TestTabBarShowsSessions(t *testing.T) {
 
 func TestTabSwitchesToTerminal(t *testing.T) {
 	a := readyApp(demoHosts...)
-	a.tabs = []*terminalTab{{id: 1, host: "prod", opening: true}}
+	a.tabs = []*terminalTab{{id: 1, host: "prod"}}
 	tt := ui.NewTester(a.view, 1000, 700)
 
 	if err := tt.Click("prod"); err != nil {
@@ -248,6 +248,11 @@ func TestAuditSummary(t *testing.T) {
 	up := auditEntry{Op: "upload", Host: "prod", Local: "/tmp/a", Remote: "/srv/a", OK: true}
 	if !strings.Contains(up.summary(), "/tmp/a → /srv/a") {
 		t.Fatalf("transfer summary = %q", up.summary())
+	}
+
+	trust := auditEntry{Op: "host_key_trust", Host: "prod", Detail: "SHA256:Ux8n0n3Vq2kS9m1xYj5oZpQ0l5c4s1Ff2g7h8j9k0lm", OK: true}
+	if !strings.Contains(trust.summary(), "host_key_trust") || !strings.Contains(trust.summary(), "SHA256:Ux8") {
+		t.Fatalf("first-use trust summary = %q", trust.summary())
 	}
 }
 
@@ -457,7 +462,7 @@ func TestEditorLoadsExistingHost(t *testing.T) {
       "addr": "10.0.0.5:22",
       "user": "deploy",
       "auth": {"type": "key", "key": "~/.ssh/id_ed25519", "passphrase": "env:PP"},
-      "host_key": "SHA256:abc",
+      "host_key": "SHA256:Ux8n0n3Vq2kS9m1xYj5oZpQ0l5c4s1Ff2g7h8j9k0lm",
       "workdir": "/srv/app",
       "elevate": {"mode": "sudo", "password": "env:SUDO"}
     }
@@ -932,7 +937,7 @@ func TestHostFromDraftKeepsHiddenFields(t *testing.T) {
 		Timeout:  config.Duration(30 * time.Second),
 		Deny:     []string{"^reboot"},
 		Allow:    []string{"^ls"},
-		HostKey:  "SHA256:abc",
+		HostKey:  "SHA256:Ux8n0n3Vq2kS9m1xYj5oZpQ0l5c4s1Ff2g7h8j9k0lm",
 		Workdir:  "/srv",
 		Auth:     config.Auth{Type: "key", Key: "/k", Cert: "/cert", Username: "u2"},
 		Elevate: &config.Elevate{

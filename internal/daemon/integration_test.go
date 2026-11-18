@@ -294,12 +294,12 @@ type harness struct {
 	srv     *daemon.Server
 	ep      ipc.Endpoint
 	cfg     *config.Config
+	pinCh   chan string // pins trusted on first use, in order
 	workDir string
 	remote  string
 	keyPath string
 	sshAddr string
 	sshFP   string
-	sshPub  ssh.PublicKey
 }
 
 func newHarness(t *testing.T) *harness {
@@ -317,6 +317,7 @@ func newHarnessOpts(t *testing.T, useKnownHosts bool) *harness {
 // harnessCfg tunes the stack under test.
 type harnessCfg struct {
 	useKnownHosts bool
+	tofu          bool // leave host_key unset: the first connection is unpinned
 	sudoPassword  string
 	requireTTY    bool
 	elevMode      string
@@ -400,9 +401,11 @@ func newHarnessCfg(t *testing.T, hc harnessCfg) *harness {
 		fmt.Sprintf(`"addr": %q`, sshSrv.addr),
 		`"user": "tester"`,
 		fmt.Sprintf(`"auth": {"type": "key", "key": %q}`, keyPath),
-		fmt.Sprintf(`"host_key": %q`, hostKey),
 		fmt.Sprintf(`"workdir": %q`, hc.workdir),
 		`"deny": ["^reboot"]`,
+	}
+	if !hc.tofu {
+		hostFields = append(hostFields, fmt.Sprintf(`"host_key": %q`, hostKey))
 	}
 	if hc.elevMode != "" {
 		elevFields := []string{fmt.Sprintf(`"mode": %q`, hc.elevMode)}
@@ -439,14 +442,26 @@ func newHarnessCfg(t *testing.T, hc harnessCfg) *harness {
 	if err != nil {
 		t.Fatalf("config: %v", err)
 	}
+	pinCh := make(chan string, 4)
 
 	ep := testEndpoint(t)
-	srv, err := daemon.New(daemon.Options{
+	var srv *daemon.Server
+	srv, err = daemon.New(daemon.Options{
 		Config:    cfg,
 		Endpoint:  ep,
 		VaultPath: filepath.Join(tmp, "vault"),
 		AuditPath: filepath.Join(tmp, "audit.log"),
 		Logger:    log.New(io.Discard, "", 0),
+		// The real agent re-seals the vault here; the harness keeps the same
+		// catalogue in memory and swaps it in, so the next dial verifies.
+		OnHostKeyPinned: func(alias, fingerprint string) error {
+			if h := cfg.Hosts[alias]; h != nil {
+				h.HostKey = fingerprint
+			}
+			srv.SetConfig(cfg)
+			pinCh <- fingerprint
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -472,7 +487,7 @@ func newHarnessCfg(t *testing.T, hc harnessCfg) *harness {
 		srv:     srv,
 		ep:      ep,
 		cfg:     cfg,
-		sshPub:  sshSrv.pub,
+		pinCh:   pinCh,
 		workDir: work,
 		remote:  filepath.ToSlash(remote),
 		keyPath: keyPath,
@@ -684,6 +699,38 @@ func TestEndToEndWithKnownHosts(t *testing.T) {
 	out := h.call(t, proto.Request{Op: proto.OpExec, Host: "local", Command: []string{"echo", "hi"}})
 	if out.Stdout != "hello\n" {
 		t.Fatalf("stdout = %q", out.Stdout)
+	}
+}
+
+// The default mode on a machine with no known_hosts: nothing arrives over the
+// socket with a human attached, so the first connection is trusted and the pin
+// is kept; the next connection is verified against it instead.
+func TestEndToEndTOFU(t *testing.T) {
+	h := newHarnessCfg(t, harnessCfg{tofu: true})
+	resp := h.call(t, proto.Request{Op: proto.OpPing, Host: "local"})
+	if !resp.OK || resp.Error != nil {
+		t.Fatalf("a first meeting must be trusted: %+v", resp.Error)
+	}
+	select {
+	case fp := <-h.pinCh:
+		if fp != h.sshFP {
+			t.Fatalf("pinned %q, want %q", fp, h.sshFP)
+		}
+	default:
+		t.Fatal("the first meeting was not recorded")
+	}
+	if got := h.cfg.Hosts["local"].HostKey; got != h.sshFP {
+		t.Fatalf("the pin was not kept in the catalogue: %q", got)
+	}
+
+	resp = h.call(t, proto.Request{Op: proto.OpPing, Host: "local"})
+	if !resp.OK || resp.Error != nil {
+		t.Fatalf("ping against the pin failed: %+v", resp.Error)
+	}
+	select {
+	case fp := <-h.pinCh:
+		t.Fatalf("a pinned host was trusted again (%s)", fp)
+	default:
 	}
 }
 

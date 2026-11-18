@@ -37,15 +37,14 @@ const (
 )
 
 type terminalTab struct {
-	id      int
-	host    string
-	label   string // the tab's title: the host, or what the remote shell sets
-	status  tabStatus
-	shell   *agent.Session
-	term    *terminal.Terminal
-	err     string
-	opening bool
-	closed  bool
+	id     int
+	host   string
+	label  string // the tab's title: the host, or what the remote shell sets
+	status tabStatus
+	shell  *agent.Session
+	term   *terminal.Terminal
+	err    string
+	closed bool
 
 	// localShell is set for a shell on this machine: no agent, no vault, no
 	// remote panes. host then carries the shell's label.
@@ -63,7 +62,7 @@ func (a *App) openTerminal(alias string) {
 	a.noteRecent(alias)
 	// Every call opens a new session: the same server can have as many tabs
 	// as you want, as a browser opens a page again.
-	tb := &terminalTab{id: a.nextTab, host: alias, label: alias, opening: true, forwardPane: newForwardPane(), status: tabConnecting}
+	tb := &terminalTab{id: a.nextTab, host: alias, label: alias, forwardPane: newForwardPane(), status: tabConnecting}
 	a.nextTab++
 	a.tabs = append(a.tabs, tb)
 	a.activeTab = len(a.tabs) - 1
@@ -71,7 +70,6 @@ func (a *App) openTerminal(alias string) {
 
 	ag := a.agentRef()
 	if ag == nil {
-		tb.opening = false
 		tb.err = tr("agent 未就绪")
 		a.invalidate()
 		return
@@ -82,7 +80,6 @@ func (a *App) openTerminal(alias string) {
 		shell, err := ag.OpenSession(context.Background(), alias, 80, 24)
 		if err != nil {
 			a.onMain(func() {
-				tb.opening = false
 				tb.status = tabFailed
 				tb.err = err.Error()
 				a.invalidate()
@@ -140,14 +137,12 @@ func (a *App) attachTerminal(tb *terminalTab, opts terminal.Options) bool {
 
 	term, err := terminal.New(opts)
 	if err != nil {
-		tb.opening = false
 		tb.status = tabFailed
 		tb.err = err.Error()
 		a.invalidate()
 		return false
 	}
 	tb.term = term
-	tb.opening = false
 	tb.status = tabLive
 	a.invalidate()
 	return true

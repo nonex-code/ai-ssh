@@ -32,11 +32,10 @@ type approvalClient struct {
 	role string
 }
 
-// pendingApproval remembers who was asked, so the close event goes to the
-// same window and a late-attached front end is not left with a stale dialog.
+// pendingApproval is the reply channel for one outstanding approval, so an
+// answer from any front end reaches the ask that is waiting for it.
 type pendingApproval struct {
-	ch       chan proto.Decision
-	audience []*approvalClient
+	ch chan proto.Decision
 }
 
 func newApprovalHub(timeout time.Duration, lg *log.Logger) *approvalHub {
@@ -137,7 +136,7 @@ func (h *approvalHub) ask(ctx context.Context, ap proto.Approval) (bool, string)
 		return false, proto.ErrApprovalUnavailable
 	}
 	ch := make(chan proto.Decision, 1)
-	h.pending[ap.ID] = &pendingApproval{ch: ch, audience: audience}
+	h.pending[ap.ID] = &pendingApproval{ch: ch}
 	h.mu.Unlock()
 
 	defer func() {

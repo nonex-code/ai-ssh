@@ -17,6 +17,7 @@ type auditEntry struct {
 	Op         string `json:"op"`
 	Host       string `json:"host"`
 	Command    string `json:"command"`
+	Detail     string `json:"detail"`
 	Local      string `json:"local"`
 	Remote     string `json:"remote"`
 	Elevated   bool   `json:"elevated"`
@@ -96,6 +97,9 @@ func (e auditEntry) summary() string {
 	what := e.Command
 	if what == "" && e.Local != "" {
 		what = strings.TrimSpace(e.Local + " → " + e.Remote)
+	}
+	if what == "" {
+		what = e.Detail // host_key_trust carries the fingerprint here
 	}
 	if len([]rune(what)) > 130 {
 		what = string([]rune(what)[:130]) + "…"

@@ -23,6 +23,57 @@ const (
 	ApprovalAlways  = "always"  // ask for every action
 )
 
+// Host key verification modes. A host may also pin one or more SHA256
+// fingerprints, comma separated.
+const (
+	// HostKeyTOFU trusts a host on first use: the fingerprint is shown, and if
+	// a human agrees it is pinned into the host's own host_key field. It needs
+	// no local file, so it works on a fresh machine and on every OS.
+	HostKeyTOFU = "tofu"
+	// HostKeyKnownHosts verifies against defaults.known_hosts. A missing file
+	// is an empty catalogue, not an error: the connection falls back to TOFU.
+	HostKeyKnownHosts = "known_hosts"
+	// HostKeyInsecure disables verification. Dangerous; tests only.
+	HostKeyInsecure = "insecure"
+)
+
+// fingerprintRe matches what ssh.FingerprintSHA256 produces: the prefix plus
+// the unpadded base64 of a 32 byte digest.
+var fingerprintRe = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}={0,2}$`)
+
+// validateHostKey checks a host_key value: a mode keyword, a comma separated
+// list of SHA256 pins, or a path to an OpenSSH known_hosts file.
+func validateHostKey(v string) error {
+	switch v {
+	case HostKeyTOFU, HostKeyKnownHosts, HostKeyInsecure:
+		return nil
+	}
+	if strings.HasPrefix(v, "SHA256:") {
+		for _, pin := range strings.Split(v, ",") {
+			pin = strings.TrimSpace(pin)
+			if !fingerprintRe.MatchString(pin) {
+				return fmt.Errorf("host_key: %q is not a SHA256:... fingerprint (ssh-keygen -l -E sha256 prints one)", pin)
+			}
+		}
+		return nil
+	}
+	if strings.TrimSpace(v) == "" {
+		return fmt.Errorf("host_key is empty")
+	}
+	return nil // a known_hosts path
+}
+
+// isHostKeyPath reports whether a host_key value is a known_hosts path rather
+// than a mode keyword or a fingerprint list. Paths are expanded like every
+// other path in the catalogue.
+func isHostKeyPath(v string) bool {
+	switch v {
+	case HostKeyTOFU, HostKeyKnownHosts, HostKeyInsecure:
+		return false
+	}
+	return !strings.HasPrefix(v, "SHA256:")
+}
+
 // Defaults applied when the config does not say otherwise.
 const (
 	DefaultTimeout         = 60 * time.Second
@@ -181,14 +232,13 @@ type Host struct {
 	Port  int    `json:"port"`
 	User  string `json:"user"`
 	Group string `json:"group,omitempty"`
-	// Favorite keeps a host at the front of the bookmarks bar.
+	// Favorite keeps a host at the front of the bookmarks bar. The order
+	// inside the bar lives in defaults.bookmarks.
 	Favorite bool `json:"favorite,omitempty"`
-	// Order is the position in the bookmarks bar (lower first).
-	Order int `json:"order,omitempty"`
 	// Forwards are tunnels opened with the session.
 	Forwards []Forward `json:"forwards,omitempty"`
 	Auth     Auth      `json:"auth"`
-	HostKey  string    `json:"host_key"` // "known_hosts" (default) | "insecure" | "SHA256:..."
+	HostKey  string    `json:"host_key"` // "tofu" (default) | "known_hosts" | path | "insecure" | "SHA256:...[,SHA256:...]"
 	Workdir  string    `json:"workdir"`
 	Timeout  Duration  `json:"timeout"`
 	Deny     []string  `json:"deny"`
@@ -207,10 +257,11 @@ type Defaults struct {
 	ConnectTimeout Duration `json:"connect_timeout"`
 	MaxOutput      int64    `json:"max_output"`
 	IdleLock       Duration `json:"idle_lock"`
-	KnownHosts     string   `json:"known_hosts"`
-	UploadRoots    []string `json:"upload_roots"`
-	DownloadRoots  []string `json:"download_roots"`
-	AuditLog       string   `json:"audit_log"`
+	// KnownHosts is read only by hosts whose host_key is "known_hosts".
+	KnownHosts    string   `json:"known_hosts"`
+	UploadRoots   []string `json:"upload_roots"`
+	DownloadRoots []string `json:"download_roots"`
+	AuditLog      string   `json:"audit_log"`
 	// Approval decides when a human must confirm an AI action:
 	// auto (never), elevate (only privileged), always.
 	// Bookmarks is the order of the bookmarks bar; aliases not listed follow
@@ -506,7 +557,13 @@ func (c *Config) prepareHost(h *Host) error {
 		return fmt.Errorf("user is required")
 	}
 	if h.HostKey == "" {
-		h.HostKey = "known_hosts"
+		h.HostKey = HostKeyTOFU
+	}
+	if err := validateHostKey(h.HostKey); err != nil {
+		return err
+	}
+	if isHostKeyPath(h.HostKey) {
+		h.HostKey = c.expand(h.HostKey)
 	}
 	if h.Approval != "" {
 		if err := validateApproval(fmt.Sprintf("host %q approval", h.Alias), h.Approval); err != nil {

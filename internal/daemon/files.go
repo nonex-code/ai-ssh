@@ -50,7 +50,7 @@ func (s *Server) OpenFiles(ctx context.Context, alias string) (*Files, error) {
 	if err != nil {
 		return nil, errf(proto.ErrUnknownHost, "%v", err)
 	}
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, true) // the SFTP pane has a human behind it
 	if err != nil {
 		return nil, err
 	}

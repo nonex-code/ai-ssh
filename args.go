@@ -11,14 +11,13 @@ import (
 // the line (before or after positionals), which the stdlib flag package does
 // not, and it is forgiving enough for LLM-generated command lines.
 type flags struct {
-	spec   map[string]bool // name -> takes a value
 	values map[string]string
 	seen   map[string]bool
 	pos    []string
 }
 
 func parseFlags(args []string, spec map[string]bool) (*flags, error) {
-	f := &flags{spec: spec, values: map[string]string{}, seen: map[string]bool{}}
+	f := &flags{values: map[string]string{}, seen: map[string]bool{}}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {

@@ -152,7 +152,6 @@ type App struct {
 	queueCancel context.CancelFunc
 	libReady    bool
 	lastTitle   string
-	lastDrop    *dragSelection
 
 	uiMu    sync.Mutex
 	uiConn  net.Conn

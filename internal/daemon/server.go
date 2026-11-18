@@ -35,6 +35,10 @@ type Options struct {
 	SessionInit bool
 	// MaxConcurrent caps simultaneous remote operations.
 	MaxConcurrent int
+	// OnHostKeyPinned persists a key trusted on first use (host aliases the AI
+	// reaches without a window in the loop). nil keeps the pin in this process
+	// only.
+	OnHostKeyPinned func(alias, fingerprint string) error
 	// OnListen runs once the endpoint is accepting connections.
 	OnListen func()
 }
@@ -60,6 +64,7 @@ type Server struct {
 	initMu      sync.Mutex
 	initCache   map[string]string
 	onListen    func()
+	pinHostKey  func(alias, fingerprint string) error
 
 	protected []string
 	secrets   []string
@@ -91,14 +96,15 @@ func New(opts Options) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:      opts.Config,
-		onListen: opts.OnListen,
-		ep:       opts.Endpoint,
-		log:      opts.Logger,
-		idle:     opts.Config.Defaults.IdleLock.Or(config.DefaultIdleLock),
-		sem:      make(chan struct{}, max),
-		closed:   make(chan struct{}),
-		secrets:  append([]string{}, opts.Config.Secrets()...),
+		cfg:        opts.Config,
+		onListen:   opts.OnListen,
+		pinHostKey: opts.OnHostKeyPinned,
+		ep:         opts.Endpoint,
+		log:        opts.Logger,
+		idle:       opts.Config.Defaults.IdleLock.Or(config.DefaultIdleLock),
+		sem:        make(chan struct{}, max),
+		closed:     make(chan struct{}),
+		secrets:    append([]string{}, opts.Config.Secrets()...),
 	}
 
 	auditPath := opts.AuditPath
@@ -173,7 +179,7 @@ func (s *Server) TestHost(ctx context.Context, h *config.Host) error {
 		ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 	}
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, true) // the form's test button has a human behind it
 	if err != nil {
 		return err
 	}
@@ -193,7 +199,7 @@ func (s *Server) RunHuman(ctx context.Context, alias, command string, timeout ti
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, true) // the monitor pane has a human behind it
 	if err != nil {
 		return "", "", err
 	}
@@ -375,7 +381,7 @@ func (s *Server) dispatch(ctx context.Context, req proto.Request) (resp proto.Re
 		return s.handleHosts()
 	case proto.OpPing:
 		return s.handlePing(ctx, req)
-	case proto.OpLock, proto.OpShutdown:
+	case proto.OpLock:
 		go func() {
 			time.Sleep(50 * time.Millisecond)
 			s.Shutdown()
@@ -419,7 +425,7 @@ func (s *Server) handlePing(ctx context.Context, req proto.Request) proto.Respon
 	ctx, cancel := context.WithTimeout(ctx, s.config().Timeout(h))
 	defer cancel()
 
-	client, err := s.dial(ctx, h)
+	client, err := s.dial(ctx, h, false)
 	if err != nil {
 		code, msg := codeOf(err)
 		return fail(code, msg, req.Host)

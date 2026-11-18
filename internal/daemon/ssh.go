@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"strings"
@@ -17,14 +18,17 @@ import (
 	"github.com/nonex-code/ai-ssh/internal/proto"
 )
 
-// dial opens an authenticated SSH connection. The returned client owns the
-// underlying TCP connection and must be closed by the caller.
-func (s *Server) dial(ctx context.Context, h *config.Host) (*ssh.Client, error) {
+// dial opens an authenticated SSH connection. human says whether the caller can
+// put a host key question in front of a person (the window's own calls) or
+// whether it must trust an unpinned key on first use (anything over the socket).
+// The returned client owns the underlying TCP connection and must be closed by
+// the caller.
+func (s *Server) dial(ctx context.Context, h *config.Host, human bool) (*ssh.Client, error) {
 	auth, err := s.authMethods(h)
 	if err != nil {
 		return nil, err
 	}
-	hostKey, err := s.hostKeyCallback(h)
+	hostKey, err := s.hostKeyCallback(h, human)
 	if err != nil {
 		return nil, err
 	}
@@ -147,64 +151,150 @@ func loadCertSigner(certPath string, key ssh.Signer) (ssh.Signer, error) {
 	return ssh.NewCertSigner(cert, key)
 }
 
-// UnknownHostKeyError is a first meeting: the host is not in known_hosts. A
-// front end can show the fingerprint and, if the human agrees, pin it.
+// UnknownHostKeyError is a first meeting: the host presents a key that is not
+// pinned anywhere yet. A front end can show the fingerprint and, if the human
+// agrees, pin it into the host's host_key.
 type UnknownHostKeyError struct {
 	Host        string
 	Fingerprint string
 }
 
 func (e *UnknownHostKeyError) Error() string {
-	return fmt.Sprintf("%s is not in known_hosts (presented %s)", e.Host, e.Fingerprint)
+	return fmt.Sprintf("first connection to %s: host key is not pinned yet (presented %s)", e.Host, e.Fingerprint)
 }
 
-func (s *Server) hostKeyCallback(h *config.Host) (ssh.HostKeyCallback, error) {
-	mode := h.HostKey
+// hostKeyCallback builds the verification policy for a host. The modes are the
+// ones config documents; the important one is the default, TOFU: a host nobody
+// has verified yet is either shown to the human at the window or, when no window
+// is in the loop, trusted on first use and recorded. Either way a machine with
+// no ~/.ssh and no known_hosts connects.
+//
+// human says whether the caller can ask a person (the window's own dialogs go
+// through OpenShell, OpenFiles, StartForward, RunHuman and TestHost); anything
+// that arrives over the socket cannot, and is an AI or a script.
+func (s *Server) hostKeyCallback(h *config.Host, human bool) (ssh.HostKeyCallback, error) {
+	mode := strings.TrimSpace(h.HostKey)
+	unknown := s.firstMeeting(h, human)
 	switch {
-	case mode == "insecure":
+	case mode == config.HostKeyInsecure:
 		s.log.Printf("WARNING: host %q has host_key=insecure, verification is disabled", h.Alias)
 		return ssh.InsecureIgnoreHostKey(), nil
 
 	case strings.HasPrefix(mode, "SHA256:"):
-		want := strings.TrimSpace(mode)
-		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			got := ssh.FingerprintSHA256(key)
-			if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-				return &HostKeyMismatchError{Host: hostname, Got: got, Want: want}
-			}
-			return nil
-		}, nil
+		return pinnedCallback(splitPins(mode)), nil
+
+	case mode == "" || mode == config.HostKeyTOFU:
+		return knownHostsCallback(nil, unknown), nil
 
 	default:
 		path := mode
-		if path == "known_hosts" || path == "" {
+		if path == config.HostKeyKnownHosts {
 			path = s.config().Defaults.KnownHosts
 		}
+		if path == "" {
+			return knownHostsCallback(nil, unknown), nil
+		}
 		if _, err := os.Stat(path); err != nil {
-			return nil, errf(proto.ErrHostKey,
-				"known_hosts file %s is unavailable (%v); set host_key to a SHA256:... pin instead", path, err)
+			if !errors.Is(err, fs.ErrNotExist) {
+				return nil, errf(proto.ErrHostKey, "stat %s: %v", path, err)
+			}
+			// No catalogue yet: nothing is pinned, so this is a first meeting.
+			return knownHostsCallback(nil, unknown), nil
 		}
 		inner, err := knownhosts.New(path)
 		if err != nil {
 			return nil, errf(proto.ErrHostKey, "parse %s: %v", path, err)
 		}
-		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			err := inner(hostname, remote, key)
-			if err == nil {
+		return knownHostsCallback(inner, unknown), nil
+	}
+}
+
+// firstMeeting decides what an unpinned host means. With a human in the loop the
+// connection stops and the window offers the fingerprint for pinning; without
+// one the key is accepted on first use and recorded, otherwise an AI could never
+// work on a machine nobody is sitting at.
+func (s *Server) firstMeeting(h *config.Host, human bool) func(hostname string, key ssh.PublicKey) error {
+	return func(hostname string, key ssh.PublicKey) error {
+		fingerprint := ssh.FingerprintSHA256(key)
+		if human {
+			return &UnknownHostKeyError{Host: hostname, Fingerprint: fingerprint}
+		}
+		s.trustOnFirstUse(h, fingerprint)
+		return nil
+	}
+}
+
+// trustOnFirstUse records a key trusted on first use. The audit trail always
+// gets a line, and a TOFU host keeps the pin in the catalogue so the next
+// connection is verified instead of trusted again. A known_hosts host is left
+// alone: that file belongs to OpenSSH, so the acceptance lasts one connection.
+func (s *Server) trustOnFirstUse(h *config.Host, fingerprint string) {
+	s.audit.write(auditEntry{
+		Time: time.Now().UTC().Format(time.RFC3339Nano),
+		Op:   "host_key_trust", Host: h.Alias, Detail: fingerprint, OK: true,
+	})
+	s.log.Printf("WARNING: host %q was trusted on first use (%s)", h.Alias, fingerprint)
+	if mode := strings.TrimSpace(h.HostKey); mode != "" && mode != config.HostKeyTOFU {
+		return
+	}
+	if s.pinHostKey == nil {
+		return
+	}
+	if err := s.pinHostKey(h.Alias, fingerprint); err != nil {
+		s.log.Printf("could not save the host key for %q (%v); the next connection trusts it again", h.Alias, err)
+	}
+}
+
+// knownHostsCallback turns a known_hosts verifier into the structured errors a
+// front end acts on. A nil inner verifier means "nothing pinned yet", which is
+// what unknown handles.
+func knownHostsCallback(inner ssh.HostKeyCallback, unknown func(string, ssh.PublicKey) error) ssh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		if inner == nil {
+			return unknown(hostname, key)
+		}
+		err := inner(hostname, remote, key)
+		if err == nil {
+			return nil
+		}
+		var ke *knownhosts.KeyError
+		if errors.As(err, &ke) {
+			if len(ke.Want) == 0 {
+				return unknown(hostname, key)
+			}
+			return &HostKeyMismatchError{
+				Host: hostname,
+				Got:  ssh.FingerprintSHA256(key),
+				Want: ssh.FingerprintSHA256(ke.Want[0].Key),
+			}
+		}
+		return hostKeyError{err}
+	}
+}
+
+// pinnedCallback accepts any of the pinned fingerprints. Several pins are kept
+// because a host may present a different key type (ed25519, rsa) on different
+// connections, and every type has its own fingerprint.
+func pinnedCallback(pins []string) ssh.HostKeyCallback {
+	return func(hostname string, _ net.Addr, key ssh.PublicKey) error {
+		got := ssh.FingerprintSHA256(key)
+		for _, want := range pins {
+			if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
 				return nil
 			}
-			var ke *knownhosts.KeyError
-			if errors.As(err, &ke) {
-				if len(ke.Want) == 0 {
-					return &UnknownHostKeyError{Host: hostname, Fingerprint: ssh.FingerprintSHA256(key)}
-				}
-				return &HostKeyMismatchError{
-					Host: hostname,
-					Got:  ssh.FingerprintSHA256(key),
-					Want: ssh.FingerprintSHA256(ke.Want[0].Key),
-				}
-			}
-			return hostKeyError{err}
-		}, nil
+		}
+		return &HostKeyMismatchError{Host: hostname, Got: got, Want: strings.Join(pins, ", ")}
 	}
+}
+
+// splitPins parses a comma separated host_key pin list, dropping blanks.
+func splitPins(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

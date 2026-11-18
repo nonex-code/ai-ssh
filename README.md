@@ -110,8 +110,10 @@ CLI/MCP 发现端点不存在时会自动拉起 `ai-ssh agent --auto`，由它�
 - **文件**：SFTP 双栏，上传下载、目录创建、重命名、删除、权限/大小显示；传输有队列。
 - **转发**：本地/远程/动态隧道，连接时自动建立，面板里显示状态和错误。
 - **详情**：采样负载、内存、磁盘、进程、登录用户，80%/90% 变色告警。
-- **主机密钥**：首次连接显示 SHA256 指纹，确认后钉进该连接的 `host_key`；密钥变化时弹窗
-  并排显示新旧指纹，必须勾选“已通过可信渠道核对”才能更新并重连。
+- **主机密钥**：默认 TOFU，不依赖 `~/.ssh/known_hosts`（文件不存在也不影响连接）。
+  窗口里首次连接显示 SHA256 指纹，确认后钉进该连接的 `host_key`；没有窗口时
+  （AI、MCP、脚本）首次连接直接信任并记入审计，下次即按钉住的指纹校验。
+  密钥变化永远报错：弹窗并排显示新旧指纹，必须勾选“已通过可信渠道核对”才能更新并重连。
 
 ### 设置
 
@@ -183,7 +185,7 @@ vault 内的 JSON 结构：
         "key": "~/.ssh/id_ed25519",
         "passphrase": "env:AISSH_PROD_PASSPHRASE"
       },
-      "host_key": "known_hosts",
+      "host_key": "tofu",
       "workdir": "/srv/app",
       "deny": ["^reboot", "rm[[:space:]]+-rf[[:space:]]+/"],
       "approval": "always",
@@ -198,7 +200,10 @@ vault 内的 JSON 结构：
 
 - `auth.type`：`key` 或 `password`。
 - 口令、私钥口令、sudo 密码可以写 `env:NAME` / `file:PATH`，保存时保留引用，不会烘焙明文。
-- `host_key`：`known_hosts`、`insecure`（危险，仅测试）或 `SHA256:...` 固定指纹。
+- `host_key`：`tofu`（默认）、`known_hosts`、一个 known_hosts 路径、`insecure`（危险，仅测试）
+  或 `SHA256:...` 固定指纹（多个用逗号分隔）。指纹就存在这里，所以
+  **不需要 `~/.ssh/known_hosts`**；`known_hosts` 模式找不到文件时按“首次连接”处理，不报错，
+  但那个文件属于 OpenSSH，ai-ssh 只读不写。
 - `approval`：`auto` / `elevate` / `always`。
 - `defaults.groups` 决定分组顺序；主机上的 `group` 会自动补进去。
 
@@ -227,6 +232,9 @@ ai-ssh passwd           # 先锁定窗口或停掉 daemon
 - AI 只能发 `exec` / `upload` / `download` 等受限操作，受 `deny` / `allow`、提权策略、
   路径根和审批控制；
 - 审批弹窗、审计日志、host key 校验都不经过 AI；
+- 首次连接的主机密钥：窗口在时由人核对后钉住；没有窗口时（AI / MCP / 脚本）由 daemon
+  信任一次并写审计（`host_key_trust`，含指纹），同时把指钉进 `host_key`，
+  随后一律按指纹校验；密钥变化永远报错，不会自动信任；
 - 本地 shell 不需要 vault，也不经过 agent。
 
 **没有做到的（诚实说明）：**
@@ -234,6 +242,8 @@ ai-ssh passwd           # 先锁定窗口或停掉 daemon
 - 没有硬件根签名 / TPM / Secure Enclave 支持；
 - 发布包尚未做代码签名和 macOS notarization，系统可能提示未知开发者；
 - 运行中的进程和已解锁的 agent 内存仍可能被同用户权限的恶意程序读取；
+- AI 首次连上一台未固定的主机时不会被拦住（否则无人值守的机器上 AI 寸步难行），
+  这一次信任记录在审计日志里，事后可查；
 - 自动更新依赖 GitHub Releases；仓库还没发布版本时只会在设置页显示提示。
 
 ## 环境变量

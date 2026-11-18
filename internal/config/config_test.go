@@ -204,3 +204,57 @@ func TestGroupsFollowTheCatalogue(t *testing.T) {
 		t.Fatal("DeleteGroup must not delete servers")
 	}
 }
+
+func TestHostKeyModesAndPins(t *testing.T) {
+	const pin = "SHA256:Ux8n0n3Vq2kS9m1xYj5oZpQ0l5c4s1Ff2g7h8j9k0lm"
+	parse := func(hostKey string) (*Config, error) {
+		fields := `"addr": "a:22", "user": "u", "auth": {"type": "key", "key": "/k"}`
+		if hostKey != "" {
+			fields += `, "host_key": "` + hostKey + `"`
+		}
+		return Parse([]byte(`{"hosts": {"a": {`+fields+`}}}`), "")
+	}
+
+	// TOFU is the default: no file, no pin, nothing to look up.
+	cfg, err := parse("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Hosts["a"].HostKey; got != HostKeyTOFU {
+		t.Fatalf("default host_key = %q, want %q", got, HostKeyTOFU)
+	}
+
+	for _, ok := range []string{HostKeyTOFU, HostKeyKnownHosts, HostKeyInsecure, pin, pin + ", " + pin, "~/.ssh/known_hosts", "/etc/ssh/known_hosts"} {
+		if _, err := parse(ok); err != nil {
+			t.Fatalf("host_key %q rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"SHA256:abc", "SHA256:", pin + ",nope"} {
+		if _, err := parse(bad); err == nil {
+			t.Fatalf("host_key %q accepted", bad)
+		}
+	}
+
+	// A path is expanded like every other path, so "~/..." cannot silently
+	// become a file that never exists and never matches.
+	cfg, err = parse("~/kh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Hosts["a"].HostKey; strings.HasPrefix(got, "~") {
+		t.Fatalf("host_key path was not expanded: %q", got)
+	}
+}
+
+func TestUnknownHostKeyIsAHostKeyError(t *testing.T) {
+	// The default catalogue must never need ~/.ssh: a machine without it is a
+	// first meeting, not a configuration error.
+	cfg, err := Parse([]byte(`{"hosts": {"a": {"addr": "a:22", "user": "u",
+      "auth": {"type": "key", "key": "/k"}, "host_key": "known_hosts"}}}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Defaults.KnownHosts == "" {
+		t.Fatal("defaults.known_hosts must keep a default for known_hosts mode")
+	}
+}

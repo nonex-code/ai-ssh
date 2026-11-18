@@ -108,7 +108,10 @@ func Open(opts Options) (*Agent, error) {
 		// Interactive sessions get the ls alias; the daemon probes the
 		// remote shell and leaves its own configuration alone.
 		SessionInit: true,
-		OnListen:    func() { a.readyOnce.Do(func() { close(a.ready) }) },
+		// A host the AI reaches with no window in the loop is trusted on
+		// first use; the pin belongs in the vault, not in a plaintext file.
+		OnHostKeyPinned: a.pinHostKey,
+		OnListen:        func() { a.readyOnce.Do(func() { close(a.ready) }) },
 	})
 	if err != nil {
 		return nil, err
@@ -165,6 +168,23 @@ func (a *Agent) UpdateConfig(fn func(*config.Config) error) error {
 		return err
 	}
 	return a.saveLocked(cfg)
+}
+
+// pinHostKey persists a host key the daemon trusted on first use: an AI or a
+// script reached the host with no window in the loop. The window's own trust
+// dialog does the same through UpdateConfig, so both paths keep the decision in
+// the encrypted catalogue instead of a plaintext known_hosts file.
+func (a *Agent) pinHostKey(alias, fingerprint string) error {
+	return a.UpdateConfig(func(cfg *config.Config) error {
+		h := cfg.Hosts[alias]
+		// The host may have been deleted, re-pinned or moved to another mode
+		// while the handshake was in flight; that decision wins.
+		if h == nil || (h.HostKey != "" && h.HostKey != config.HostKeyTOFU) {
+			return nil
+		}
+		h.HostKey = fingerprint
+		return nil
+	})
 }
 
 // saveLocked is SaveConfig with the write lock already held.

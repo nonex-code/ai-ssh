@@ -539,7 +539,6 @@ func (a *App) dropSelection(tb *terminalTab, to side, sel dragSelection) {
 
 // dropSelectionInto queues transfers into dir, the folder under the drop.
 func (a *App) dropSelectionInto(tb *terminalTab, to side, dir string, sel dragSelection) {
-	a.lastDrop = &sel
 	fp := &tb.filesPane
 	f := fp.files
 	if f == nil || len(sel.paths) == 0 {
@@ -579,7 +578,6 @@ func (a *App) dropSelectionInto(tb *terminalTab, to side, dir string, sel dragSe
 
 // dropLocalFiles queues uploads for files dropped from another application.
 func (a *App) dropLocalFiles(tb *terminalTab, paths []string) {
-	a.lastDrop = &dragSelection{from: sideLocal, paths: paths}
 	fp := &tb.filesPane
 	f := fp.files
 	if f == nil || len(paths) == 0 {
