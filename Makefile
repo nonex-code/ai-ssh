@@ -1,5 +1,5 @@
 BIN     := ai-ssh
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 # A tag name is usually v0.1.0; assets and the binary use 0.1.0.
 override VERSION := $(patsubst v%,%,$(VERSION))
 
